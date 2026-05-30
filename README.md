@@ -30,7 +30,7 @@ An unofficial Sonos controller built with **Rust + Tauri + React**. Designed as 
 
 ## Download
 
-Check the [Releases](https://github.com/nickel-c/sonos-controller/releases) page for pre-built packages.
+Check the [Releases](https://github.com/topcheer/sonos-controller/releases) page for pre-built packages.
 
 ## Build from Source
 
@@ -50,7 +50,7 @@ Check the [Releases](https://github.com/nickel-c/sonos-controller/releases) page
 ### Build
 
 ```bash
-git clone https://github.com/nickel-c/sonos-controller.git
+git clone https://github.com/topcheer/sonos-controller.git
 cd sonos-controller
 npm install
 npm run tauri build
