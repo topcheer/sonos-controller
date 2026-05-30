@@ -93,6 +93,10 @@ Music service tokens (if applicable) are stored in browser localStorage.
 - No Sonos Cloud API access (local network only)
 - No alarm management yet
 
+## Acknowledgments
+
+- [unoffical-sonos-controller-for-linux](https://github.com/pascalopitz/unoffical-sonos-controller-for-linux) — Original Electron-based Sonos controller that inspired this project
+
 ## License
 
 MIT
