@@ -1,0 +1,9 @@
+[Desktop Entry]
+Categories=AudioVideo;Audio;Player;
+Comment=Unofficial Sonos Controller for Linux
+Exec=env WEBKIT_DISABLE_DMABUF_RENDERER=1 sonos-controller
+StartupWMClass=sonos-controller
+Icon=sonos-controller
+Name=Sonos Controller
+Terminal=false
+Type=Application
