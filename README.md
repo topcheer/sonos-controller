@@ -32,6 +32,22 @@ An unofficial Sonos controller built with **Rust + Tauri + React**. Designed as 
 
 Check the [Releases](https://github.com/topcheer/sonos-controller/releases) page for pre-built packages.
 
+### Homebrew (Linux)
+
+```bash
+brew tap topcheer/sonos-controller
+brew install --cask sonos-controller
+```
+
+### Manual download
+
+| Format | Install |
+|--------|---------|
+| AppImage | `chmod +x && ./Sonos.Controller_*.AppImage` |
+| .deb | `sudo dpkg -i *.deb` |
+| .rpm | `sudo rpm -i *.rpm` |
+| .tar.gz | `tar xzf *.tar.gz && ./sonos-controller/sonos-controller` |
+
 ## Build from Source
 
 ### Prerequisites
