@@ -87,12 +87,12 @@ export default function App() {
   const scan = useCallback(async () => {
     setScanning(true); setError(null);
     try {
-      let found = await invoke<SonosDevice[]>("discover_devices", { timeout: 8 });
+      const found = await invoke<SonosDevice[]>("discover_devices", { timeout: 8 });
       // Stable sort by room name
       found.sort((a, b) => (a.room_name || a.name).localeCompare(b.room_name || b.name));
       setDevices(found);
       if (found.length > 0) {
-        let zgs = await invoke<ZoneGroup[]>("get_zone_groups", { ip: found[0].ip });
+        const zgs = await invoke<ZoneGroup[]>("get_zone_groups", { ip: found[0].ip });
         // Stable sort groups by coordinator name
         zgs.sort((a, b) => (a.coordinator_name || a.id).localeCompare(b.coordinator_name || b.id));
         setGroups(zgs);
@@ -143,9 +143,10 @@ export default function App() {
       invoke<boolean>("get_mute", { ip: selectedIp }).then(m => setMuted(m)).catch(() => {});
       invoke<TransportSettings>("get_transport_settings", { ip: selectedIp }).then(s => setSettings(s)).catch(() => {});
       invoke<SleepTimer>("get_sleep_timer", { ip: selectedIp }).then(s => setSleepTimer(s.remaining_time)).catch(() => {});
-    } catch {}
+    } catch (_e) { /* ignored */ }
   }, [selectedIp]);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- initial poll on mount/selectedIp change */
   useEffect(() => {
     if (!selectedIp) return;
     poll();
@@ -162,8 +163,10 @@ export default function App() {
       }
     }).catch(() => {});
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [selectedIp, poll]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- initial scan on mount
   useEffect(() => { scan(); }, [scan]);
 
   // Interpolate curTime between polls for smooth lyrics sync
@@ -194,7 +197,7 @@ export default function App() {
     try {
       const items = await invoke<QueueItem[]>("get_queue", { ip: selectedIp, start: 0, limit: 500 });
       setQueue(items.map(q => ({ ...q, album_art_uri: q.album_art_uri?.startsWith("/") ? `http://${selectedIp}:1400${q.album_art_uri}` : q.album_art_uri })));
-    } catch {}
+    } catch (_e) { /* ignored */ }
   }, [selectedIp]);
 
   const loadBrowse = useCallback(async (objectId: string) => {
@@ -202,7 +205,7 @@ export default function App() {
     try {
       const items = await invoke<BrowserItem[]>("browse_directory", { ip: selectedIp, objectId, start: 0, limit: 500 });
       setBrowseItems(items.map(b => ({ ...b, album_art_uri: b.album_art_uri?.startsWith("/") ? `http://${selectedIp}:1400${b.album_art_uri}` : b.album_art_uri })));
-    } catch {}
+    } catch (_e) { /* ignored */ }
   }, [selectedIp]);
 
   const loadEq = useCallback(async () => {
@@ -214,7 +217,7 @@ export default function App() {
         invoke<boolean>("get_loudness", { ip: selectedIp }),
       ]);
       setBass(b); setTreble(t); setLoudness(l);
-    } catch {}
+    } catch (_e) { /* ignored */ }
   }, [selectedIp]);
 
   // Music Services
@@ -226,7 +229,7 @@ export default function App() {
       // Load saved tokens from localStorage
       const saved = localStorage.getItem("sonos_service_tokens");
       if (saved) setServiceTokens(JSON.parse(saved));
-    } catch {}
+    } catch (_e) { /* ignored */ }
   }, [selectedIp]);
 
   const loadServiceRoot = useCallback(async (service: MusicService) => {
@@ -236,7 +239,7 @@ export default function App() {
       setSelectedService(service);
       setServiceBrowsePath([{ id: "root", title: service.name }]);
       setServiceItems(result.items);
-    } catch (e) {
+    } catch (_e) {
       // For QQ Music and similar services where SMAPI browse fails, show search-only mode
       setSelectedService(service);
       setServiceBrowsePath([{ id: "root", title: service.name }]);
@@ -281,12 +284,14 @@ export default function App() {
     } catch (e) { setError(String(e)); }
   }, [selectedService, serviceTokens]);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- load data on tab change */
   useEffect(() => {
     if (tab === "queue") loadQueue();
     else if (tab === "browse") {
       loadBrowse(browsePath[browsePath.length - 1].id);
     } else if (tab === "eq") loadEq();
     else if (tab === "services") loadMusicServices();
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [tab, loadQueue, loadBrowse, loadEq, loadMusicServices, browsePath]);
 
   const cmd = async (c: string, args?: Record<string, unknown>) => {
@@ -322,7 +327,7 @@ export default function App() {
       (async () => {
         const vols: Record<string, number> = {};
         for (const m of curGroup.members) {
-          try { vols[m.ip] = await invoke<number>("get_volume", { ip: m.ip }); } catch { vols[m.ip] = 0; }
+          try { vols[m.ip] = await invoke<number>("get_volume", { ip: m.ip }); } catch (_e) { vols[m.ip] = 0; }
         }
         setPerVolume(vols);
       })();
@@ -721,7 +726,7 @@ export default function App() {
                                 serviceUri: selectedService.secure_uri, authToken: token || "", parentId: p.id, index: 0, count: 100,
                               });
                               setServiceItems(result.items);
-                            } catch {}
+                            } catch (_e) { /* ignored */ }
                           }}
                             className={`hover:text-white transition-colors rounded px-1.5 py-0.5 ${i === serviceBrowsePath.length - 1 ? "text-white bg-white/10" : ""}`}>{p.title}</button>
                         </span>
