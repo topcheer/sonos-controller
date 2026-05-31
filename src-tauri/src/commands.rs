@@ -153,6 +153,19 @@ pub async fn search_qq_music(term: String) -> Result<Vec<crate::music_services::
     crate::music_services::search_qq_music(&client, &term, 30).await
 }
 
+// Add URI to queue and play it (preserves existing queue)
+#[tauri::command]
+pub async fn add_to_queue_and_play(ip: String, uri: String, metadata: Option<String>) -> Result<(), String> {
+    crate::ssdp::add_to_queue_and_play(&ip, &uri, metadata.as_deref().unwrap_or("")).await
+}
+
+// Search lyrics from LRCLIB
+#[tauri::command]
+pub async fn search_lyrics(artist: String, title: String) -> Result<Option<crate::music_services::Lyrics>, String> {
+    let client = reqwest::Client::new();
+    crate::music_services::search_lyrics(&client, &artist, &title).await
+}
+
 // ── Music Services (SMAPI) ──────────────────────────────────────
 
 #[tauri::command]

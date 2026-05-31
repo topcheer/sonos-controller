@@ -18,3 +18,5 @@ export interface MusicService { id: number; name: string; uri: string; secure_ur
 export interface SmapiItem { id: string; title: string; item_type: string; artist: string | null; album: string | null; album_art_uri: string | null; uri: string | null; description: string | null; playback_metadata: string | null; }
 export interface SmapiBrowseResult { items: SmapiItem[]; index: number; total: number; }
 export interface SmapiSearchResult { items: SmapiItem[]; index: number; total: number; }
+export interface LyricLine { time_ms: number; text: string; }
+export interface Lyrics { track_name: string; artist_name: string; album_name: string; duration: number; lines: LyricLine[]; }

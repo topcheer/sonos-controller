@@ -55,6 +55,8 @@ pub fn run() {
             commands::leave_group,
             commands::open_url,
             commands::search_qq_music,
+            commands::add_to_queue_and_play,
+            commands::search_lyrics,
             // Music Services (SMAPI)
             commands::list_music_services,
             commands::get_household_id,

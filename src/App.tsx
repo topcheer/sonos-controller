@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import type {
   SonosDevice, ZoneGroup, TransportInfo, PositionInfo, MediaInfo,
   TrackInfo, QueueItem, BrowserItem, TransportSettings, SleepTimer,
-  MusicService, SmapiItem, SmapiBrowseResult, SmapiSearchResult,
+  MusicService, SmapiItem, SmapiBrowseResult, SmapiSearchResult, Lyrics, LyricLine,
 } from "./types";
 
 function parseDidl(metadata: string, ip: string): TrackInfo | null {
@@ -33,6 +33,14 @@ function parseDur(d: string): number {
   return p.length === 3 ? +p[0] * 3600 + +p[1] * 60 + +p[2] : 0;
 }
 
+function isLyricLineActive(line: LyricLine, lines: LyricLine[], idx: number, curTimeSec: number): boolean {
+  const curMs = curTimeSec * 1000;
+  if (curMs < line.time_ms) return false;
+  const next = lines[idx + 1];
+  if (!next) return true;
+  return curMs < next.time_ms;
+}
+
 type Tab = "queue" | "browse" | "services" | "groups" | "eq";
 
 export default function App() {
@@ -47,9 +55,14 @@ export default function App() {
   const [muted, setMuted] = useState(false);
   const [duration, setDuration] = useState(0);
   const [curTime, setCurTime] = useState(0);
+  const lastPollTimeRef = useRef<number>(0);
+  const lastPollCurRef = useRef<number>(0);
   const [settings, setSettings] = useState<TransportSettings | null>(null);
   const [sleepTimer, setSleepTimer] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  const [lyrics, setLyrics] = useState<Lyrics | null>(null);
+  const [showLyrics, setShowLyrics] = useState(false);
+  const lyricsRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<Tab>("queue");
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [browseItems, setBrowseItems] = useState<BrowserItem[]>([]);
@@ -103,9 +116,22 @@ export default function App() {
       setTransport(ti);
       setPosition(pi);
       setDuration(parseDur(pi.track_duration)); setCurTime(parseDur(pi.rel_time));
+      lastPollTimeRef.current = Date.now();
+      lastPollCurRef.current = parseDur(pi.rel_time);
       // Prefer TrackMetaData from PositionInfo, fallback to MediaInfo
       if (pi.track_metadata) {
-        setTrack(parseDidl(pi.track_metadata, selectedIp));
+        const t = parseDidl(pi.track_metadata, selectedIp);
+        setTrack(t);
+        // Search lyrics when track changes
+        if (t && (t.title !== track?.title || t.artist !== track?.artist)) {
+          const artist = t.artist || "";
+          const title = t.title || "";
+          if (artist && title) {
+            invoke<Lyrics | null>("search_lyrics", { artist, title })
+              .then(l => setLyrics(l))
+              .catch(() => setLyrics(null));
+          }
+        }
       } else {
         try {
           const mi = await invoke<MediaInfo>("get_media_info", { ip: selectedIp });
@@ -124,10 +150,44 @@ export default function App() {
     if (!selectedIp) return;
     poll();
     pollRef.current = setInterval(poll, 3000);
+    // Fetch lyrics for current track on speaker switch
+    invoke<PositionInfo>("get_position_info", { ip: selectedIp }).then(pi => {
+      if (pi.track_metadata) {
+        const t = parseDidl(pi.track_metadata, selectedIp);
+        if (t?.artist && t?.title) {
+          invoke<Lyrics | null>("search_lyrics", { artist: t.artist, title: t.title })
+            .then(l => setLyrics(l))
+            .catch(() => setLyrics(null));
+        }
+      }
+    }).catch(() => {});
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [selectedIp, poll]);
 
   useEffect(() => { scan(); }, [scan]);
+
+  // Interpolate curTime between polls for smooth lyrics sync
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (lastPollTimeRef.current > 0 && transport?.state === "PLAYING") {
+        const elapsed = (Date.now() - lastPollTimeRef.current) / 1000;
+        const interpolated = lastPollCurRef.current + elapsed;
+        if (interpolated <= duration) {
+          setCurTime(interpolated);
+        }
+      }
+    }, 250);
+    return () => clearInterval(id);
+  }, [transport?.state, duration]);
+
+  // Auto-scroll lyrics to current line
+  useEffect(() => {
+    if (!showLyrics || !lyrics || !lyricsRef.current) return;
+    const active = lyricsRef.current.querySelector(".text-white") as HTMLElement | null;
+    if (active) {
+      active.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [curTime, showLyrics, lyrics]);
 
   const loadQueue = useCallback(async () => {
     if (!selectedIp) return;
@@ -198,8 +258,8 @@ export default function App() {
       } catch (e) { setError(String(e)); }
     } else if (item.uri && selectedIp) {
       try {
-        await invoke("play_uri", { ip: selectedIp, uri: item.uri, metadata: item.playback_metadata || "" });
-        setTimeout(poll, 500);
+        await invoke("add_to_queue_and_play", { ip: selectedIp, uri: item.uri, metadata: item.playback_metadata || "" });
+        setTimeout(() => { poll(); loadQueue(); }, 800);
       } catch (e) { setError(String(e)); }
     }
   }, [selectedService, serviceTokens, serviceBrowsePath, selectedIp, poll]);
@@ -369,7 +429,38 @@ export default function App() {
           </div>
         )}
 
-        {!selectedIp ? (
+        {/* ===== LYRICS FULL PANEL ===== */}
+        {showLyrics && lyrics ? (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Header with back button */}
+            <div className="px-6 pt-4 pb-3 flex items-center gap-3 border-b border-white/[0.06]">
+              <button onClick={() => setShowLyrics(false)}
+                className="w-8 h-8 rounded-lg hover:bg-white/10 flex items-center justify-center transition-colors">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg>
+              </button>
+              <div className="min-w-0">
+                <div className="text-base font-semibold truncate">{lyrics.track_name}</div>
+                <div className="text-xs text-gray-500 truncate">{lyrics.artist_name}{lyrics.album_name ? ` · ${lyrics.album_name}` : ""}</div>
+              </div>
+            </div>
+            {/* Lyrics body */}
+            <div ref={lyricsRef} className="flex-1 overflow-y-auto px-8 py-6 scrollbar-thin">
+              <div className="space-y-5 max-w-2xl mx-auto text-center">
+                {lyrics.lines.map((line, i) => {
+                  const isCurrent = isLyricLineActive(line, lyrics.lines, i, curTime);
+                  return (
+                    <div key={i}
+                      className={`transition-all duration-300 leading-relaxed ${
+                        isCurrent ? "text-xl font-semibold text-white" : "text-base text-gray-600 hover:text-gray-400"
+                      }`}>
+                      {line.text}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ) : !selectedIp ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center space-y-4">
               <div className="w-24 h-24 rounded-3xl bg-white/[0.03] flex items-center justify-center mx-auto">
@@ -383,7 +474,7 @@ export default function App() {
           </div>
         ) : (<>
           {/* ===== NOW PLAYING HERO ===== */}
-          <div className="px-8 pt-8 pb-6">
+          <div className="px-6 pt-6 pb-4">
             <div className="flex items-start gap-6">
               {/* Album Art */}
               <div className="w-[200px] h-[200px] rounded-2xl overflow-hidden flex-shrink-0 shadow-2xl shadow-black/50 bg-gradient-to-br from-indigo-900/30 to-purple-900/30">
@@ -450,6 +541,27 @@ export default function App() {
                     )}
                   </div>
                 </div>
+
+                {/* Lyrics Summary - current + next line */}
+                {lyrics && lyrics.lines.length > 0 && (() => {
+                  const curIdx = lyrics.lines.findIndex((l, i) => isLyricLineActive(l, lyrics.lines, i, curTime));
+                  const currentLine = curIdx >= 0 ? lyrics.lines[curIdx] : null;
+                  const nextLine = curIdx >= 0 && curIdx + 1 < lyrics.lines.length ? lyrics.lines[curIdx + 1] : null;
+                  return (
+                    <div className="mt-4 cursor-pointer group" onClick={() => setShowLyrics(true)}>
+                      {currentLine && (
+                        <div className="text-lg font-medium text-white/90 leading-relaxed truncate">
+                          {currentLine.text}
+                        </div>
+                      )}
+                      {nextLine && (
+                        <div className="text-sm text-gray-600 leading-relaxed truncate group-hover:text-gray-400 transition-colors">
+                          {nextLine.text}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
@@ -487,7 +599,7 @@ export default function App() {
           </div>
 
           {/* ===== TABS ===== */}
-          <div className="px-8">
+          <div className="px-6 pt-4">
             <div className="flex gap-1 bg-white/[0.03] rounded-xl p-1">
               {([["queue", "Queue"], ["browse", "Browse"], ["services", "Services"], ["groups", "Groups"], ["eq", "EQ"]] as [Tab, string][]).map(([id, label]) => (
                 <button key={id} onClick={() => setTab(id)}
@@ -501,7 +613,7 @@ export default function App() {
           </div>
 
           {/* ===== TAB CONTENT ===== */}
-          <div className="flex-1 overflow-y-auto px-8 pt-4 pb-8">
+          <div className="flex-1 overflow-y-auto px-6 pt-4 pb-6">
 
             {/* Queue */}
             {tab === "queue" && (
@@ -509,7 +621,7 @@ export default function App() {
                 {queue.map((item, i) => {
                   const active = position?.track === i + 1;
                   return (
-                    <button key={i} onClick={() => playTrack(i)}
+                    <button key={i} onClick={() => playTrack(i + 1)}
                       className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all text-left group ${active
                         ? "bg-indigo-500/10"
                         : "hover:bg-white/[0.04]"}`}>

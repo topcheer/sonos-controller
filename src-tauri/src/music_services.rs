@@ -339,3 +339,122 @@ pub async fn search_qq_music(client: &Client, term: &str, count: u32) -> Result<
     }
     Ok(items)
 }
+
+// ── Lyrics (LRCLIB) ────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LyricLine {
+    pub time_ms: u64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Lyrics {
+    pub track_name: String,
+    pub artist_name: String,
+    pub album_name: String,
+    pub duration: f64,
+    pub lines: Vec<LyricLine>,
+}
+
+/// Search LRCLIB for synced lyrics by artist and title
+pub async fn search_lyrics(client: &Client, artist: &str, title: &str) -> Result<Option<Lyrics>, String> {
+    let query = format!("{} {}", artist, title);
+    let url = format!(
+        "https://lrclib.net/api/search?q={}&has_synced_lyrics=true",
+        urlencoding::encode(&query)
+    );
+    let resp = client
+        .get(&url)
+        .header("User-Agent", "SonosController/0.1.0")
+        .send()
+        .await
+        .map_err(|e| format!("LRCLIB request failed: {e}"))?;
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let songs: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
+
+    // Find best match: prefer exact or closest title/artist match
+    let title_lower = title.to_lowercase();
+    let artist_lower = artist.to_lowercase();
+    let mut best: Option<&serde_json::Value> = None;
+    let mut best_score = -1i32;
+
+    for song in &songs {
+        let s_title = song["trackName"].as_str().unwrap_or("").to_lowercase();
+        let s_artist = song["artistName"].as_str().unwrap_or("").to_lowercase();
+        let synced = song["syncedLyrics"].as_str().unwrap_or("");
+
+        if synced.is_empty() {
+            continue;
+        }
+
+        let mut score = 0i32;
+        if s_title.contains(&title_lower) || title_lower.contains(&s_title) {
+            score += 10;
+        }
+        if s_artist.contains(&artist_lower) || artist_lower.contains(&s_artist) {
+            score += 10;
+        }
+        // Prefer shorter artist name match (more specific)
+        if s_artist == artist_lower {
+            score += 5;
+        }
+        if s_title == title_lower {
+            score += 5;
+        }
+
+        if score > best_score {
+            best_score = score;
+            best = Some(song);
+        }
+    }
+
+    let synced = match best {
+        Some(song) => song["syncedLyrics"].as_str().unwrap_or("").to_string(),
+        None => return Ok(None),
+    };
+
+    if synced.is_empty() {
+        return Ok(None);
+    }
+
+    // Parse LRC format: [mm:ss.xx] text
+    let lines = parse_lrc(&synced);
+    if lines.is_empty() {
+        return Ok(None);
+    }
+
+    // Extract metadata from the matched song
+    let song = best.unwrap();
+    let track_name = song["trackName"].as_str().unwrap_or("").to_string();
+    let artist_name = song["artistName"].as_str().unwrap_or("").to_string();
+    let album_name = song["albumName"].as_str().unwrap_or("").to_string();
+    let duration = song["duration"].as_f64().unwrap_or(0.0);
+
+    Ok(Some(Lyrics { track_name, artist_name, album_name, duration, lines }))
+}
+
+/// Parse LRC format lyrics into timed lines
+fn parse_lrc(lrc: &str) -> Vec<LyricLine> {
+    let re = regex::Regex::new(r"\[(\d{2}):(\d{2})\.(\d{2,3})\]\s*(.*)").unwrap();
+    let mut lines: Vec<LyricLine> = Vec::new();
+
+    for cap in re.captures_iter(lrc) {
+        let min: u64 = cap[1].parse().unwrap_or(0);
+        let sec: u64 = cap[2].parse().unwrap_or(0);
+        let ms_str = &cap[3];
+        let ms: u64 = if ms_str.len() == 2 {
+            ms_str.parse::<u64>().unwrap_or(0) * 10
+        } else {
+            ms_str.parse::<u64>().unwrap_or(0)
+        };
+        let time_ms = min * 60000 + sec * 1000 + ms;
+        let text = cap[4].trim().to_string();
+        if !text.is_empty() {
+            lines.push(LyricLine { time_ms, text });
+        }
+    }
+
+    lines.sort_by_key(|l| l.time_ms);
+    lines
+}

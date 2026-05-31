@@ -461,8 +461,11 @@ pub async fn play_uri(ip: &str, uri: &str, metadata: &str) -> Result<(), String>
 
 /// Play from queue by track number
 pub async fn play_from_queue(ip: &str, track_index: u32) -> Result<(), String> {
-    let body = format!(
-        r#"<?xml version="1.0" encoding="utf-8"?>
+    let url = format!("http://{}:1400/MediaRenderer/AVTransport/Control", ip);
+    let client = reqwest::Client::new();
+
+    // SetAVTransportURI to queue — may fail if already on queue, that's OK
+    let body = r#"<?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
   <s:Body>
     <u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
@@ -471,23 +474,17 @@ pub async fn play_from_queue(ip: &str, track_index: u32) -> Result<(), String> {
       <CurrentURIMetaData></CurrentURIMetaData>
     </u:SetAVTransportURI>
   </s:Body>
-</s:Envelope>"#
-    );
+</s:Envelope>"#;
 
-    let url = format!("http://{}:1400/MediaRenderer/AVTransport/Control", ip);
-    reqwest::Client::new()
+    let _ = client
         .post(&url)
-        .header(
-            "SOAPAction",
-            "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\"",
-        )
+        .header("SOAPAction", "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\"")
         .header("Content-Type", "text/xml; charset=utf-8")
         .body(body)
         .send()
-        .await
-        .map_err(|e| e.to_string())?;
+        .await; // Ignore error — already on queue is fine
 
-    // Now seek to the track
+    // Seek to the track
     let seek_body = format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
@@ -502,12 +499,9 @@ pub async fn play_from_queue(ip: &str, track_index: u32) -> Result<(), String> {
         track_index
     );
 
-    reqwest::Client::new()
+    client
         .post(&url)
-        .header(
-            "SOAPAction",
-            "\"urn:schemas-upnp-org:service:AVTransport:1#Seek\"",
-        )
+        .header("SOAPAction", "\"urn:schemas-upnp-org:service:AVTransport:1#Seek\"")
         .header("Content-Type", "text/xml; charset=utf-8")
         .body(seek_body)
         .send()
@@ -525,12 +519,117 @@ pub async fn play_from_queue(ip: &str, track_index: u32) -> Result<(), String> {
   </s:Body>
 </s:Envelope>"#;
 
-    reqwest::Client::new()
+    client
         .post(&url)
-        .header(
-            "SOAPAction",
-            "\"urn:schemas-upnp-org:service:AVTransport:1#Play\"",
-        )
+        .header("SOAPAction", "\"urn:schemas-upnp-org:service:AVTransport:1#Play\"")
+        .header("Content-Type", "text/xml; charset=utf-8")
+        .body(play_body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Add a URI to the queue and start playing it
+pub async fn add_to_queue_and_play(ip: &str, uri: &str, metadata: &str) -> Result<(), String> {
+    let url = format!("http://{}:1400/MediaRenderer/AVTransport/Control", ip);
+    let client = reqwest::Client::new();
+
+    // Step 1: Add URI to end of queue
+    let escaped_uri = html_escape(uri);
+    let escaped_meta = html_escape(metadata);
+    let add_body = format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+  <s:Body>
+    <u:AddURIToQueue xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
+      <InstanceID>0</InstanceID>
+      <EnqueuedURI>{escaped_uri}</EnqueuedURI>
+      <EnqueuedURIMetaData>{escaped_meta}</EnqueuedURIMetaData>
+      <DesiredFirstTrackNumberEnqueued>0</DesiredFirstTrackNumberEnqueued>
+      <EnqueueAsNext>1</EnqueueAsNext>
+    </u:AddURIToQueue>
+  </s:Body>
+</s:Envelope>"#
+    );
+
+    let resp = client
+        .post(&url)
+        .header("SOAPAction", "\"urn:schemas-upnp-org:service:AVTransport:1#AddURIToQueue\"")
+        .header("Content-Type", "text/xml; charset=utf-8")
+        .body(add_body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let resp_text = resp.text().await.map_err(|e| e.to_string())?;
+
+    // Extract the track number that was assigned
+    let track_num = regex::Regex::new(r"<FirstTrackNumberEnqueued>(\d+)</FirstTrackNumberEnqueued>")
+        .unwrap()
+        .captures(&resp_text)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_else(|| "0".to_string());
+
+    // Step 2: SetAVTransportURI to queue
+    let set_body = r#"<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+  <s:Body>
+    <u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
+      <InstanceID>0</InstanceID>
+      <CurrentURI>x-rincon-queue:Q:0#0</CurrentURI>
+      <CurrentURIMetaData></CurrentURIMetaData>
+    </u:SetAVTransportURI>
+  </s:Body>
+</s:Envelope>"#;
+
+    let _ = client
+        .post(&url)
+        .header("SOAPAction", "\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\"")
+        .header("Content-Type", "text/xml; charset=utf-8")
+        .body(set_body)
+        .send()
+        .await;
+
+    // Step 3: Seek to the added track
+    let seek_body = format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+  <s:Body>
+    <u:Seek xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
+      <InstanceID>0</InstanceID>
+      <Unit>TRACK_NR</Unit>
+      <Target>{track_num}</Target>
+    </u:Seek>
+  </s:Body>
+</s:Envelope>"#
+    );
+
+    client
+        .post(&url)
+        .header("SOAPAction", "\"urn:schemas-upnp-org:service:AVTransport:1#Seek\"")
+        .header("Content-Type", "text/xml; charset=utf-8")
+        .body(seek_body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Step 4: Play
+    let play_body = r#"<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+  <s:Body>
+    <u:Play xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
+      <InstanceID>0</InstanceID>
+      <Speed>1</Speed>
+    </u:Play>
+  </s:Body>
+</s:Envelope>"#;
+
+    client
+        .post(&url)
+        .header("SOAPAction", "\"urn:schemas-upnp-org:service:AVTransport:1#Play\"")
         .header("Content-Type", "text/xml; charset=utf-8")
         .body(play_body)
         .send()
