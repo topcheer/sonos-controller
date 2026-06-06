@@ -82,6 +82,7 @@ export default function App() {
   const [serviceSearchItems, setServiceSearchItems] = useState<SmapiItem[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressRef = useRef<HTMLDivElement>(null);
+  const queueListRef = useRef<HTMLDivElement>(null);
 
 
   const scan = useCallback(async () => {
@@ -283,6 +284,13 @@ export default function App() {
       setServiceSearchItems(result.items);
     } catch (e) { setError(String(e)); }
   }, [selectedService, serviceTokens]);
+
+  // Scroll queue to currently playing track
+  useEffect(() => {
+    if (tab !== "queue" || !queueListRef.current || !position?.track) return;
+    const activeEl = queueListRef.current.querySelector('[data-queue-idx="' + (position.track - 1) + '"]');
+    activeEl?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [queue, position?.track, tab]);
 
   /* eslint-disable react-hooks/set-state-in-effect -- load data on tab change */
   useEffect(() => {
@@ -622,11 +630,11 @@ export default function App() {
 
             {/* Queue */}
             {tab === "queue" && (
-              <div className="space-y-0.5">
+              <div ref={queueListRef} className="space-y-0.5">
                 {queue.map((item, i) => {
                   const active = position?.track === i + 1;
                   return (
-                    <button key={i} onClick={() => playTrack(i + 1)}
+                    <button key={i} data-queue-idx={i} onClick={() => playTrack(i + 1)}
                       className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all text-left group ${active
                         ? "bg-indigo-500/10"
                         : "hover:bg-white/[0.04]"}`}>
